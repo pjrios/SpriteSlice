@@ -1,0 +1,5 @@
+{
+  "name": "SpriteSlice",
+  "description": "A browser-based tool to slice sprite sheets into frames with auto-trim, color keying, and ZIP export.",
+  "requestFramePermissions": []
+}
