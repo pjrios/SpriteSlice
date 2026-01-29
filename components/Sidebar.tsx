@@ -13,6 +13,10 @@ interface SidebarProps {
   onAutoDetectEdgeColors: () => void;
   isPickingColor: boolean;
   hasImage: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -25,7 +29,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   onAutoDetectColor,
   onAutoDetectEdgeColors,
   isPickingColor,
-  hasImage
+  hasImage,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }) => {
   
   const updateGrid = (key: keyof AppSettings['grid'], val: number) => {
@@ -57,9 +65,35 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div className="w-80 bg-gray-850 border-r border-gray-750 flex flex-col h-full text-sm">
       <div className="p-4 border-b border-gray-750">
-        <h1 className="font-bold text-lg text-white mb-4 flex items-center gap-2">
-          <Scissors className="w-5 h-5 text-blue-400" /> SpriteSlice
-        </h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="font-bold text-lg text-white flex items-center gap-2">
+            <Scissors className="w-5 h-5 text-blue-400" /> SpriteSlice
+          </h1>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                canUndo ? 'bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800' : 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed'
+              }`}
+              title="Undo (Ctrl+Z)"
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                canRedo ? 'bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800' : 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed'
+              }`}
+              title="Redo (Ctrl+Y / Ctrl+Shift+Z)"
+            >
+              Redo
+            </button>
+          </div>
+        </div>
         
         <label className="flex items-center justify-center w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded cursor-pointer transition-colors font-medium">
           <Upload className="w-4 h-4 mr-2" />

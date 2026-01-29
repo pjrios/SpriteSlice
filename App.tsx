@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ProjectState, AppSettings, FrameData, Rect } from './types';
 import Sidebar from './components/Sidebar';
 import FrameList from './components/FrameList';
@@ -122,6 +122,15 @@ const detectEdgeColors = (image: HTMLImageElement, maxColors: number = 12, merge
   return colors.map(c => rgbToHex(c.r, c.g, c.b));
 };
 
+type HistorySnapshot = {
+  settings: AppSettings;
+  manualRects: Rect[];
+  islandRects: Rect[];
+  hiddenRectIds: string[];
+  selectedRectId: string | null;
+  imageBlob: Blob | null;
+};
+
 const App: React.FC = () => {
   // State
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -135,6 +144,11 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [isPickingColor, setIsPickingColor] = useState(false);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [historyLength, setHistoryLength] = useState(0);
+
+  const historyRef = useRef<HistorySnapshot[]>([]);
+  const isRestoringRef = useRef(false);
 
   // Load from DB on mount
   useEffect(() => {
@@ -163,6 +177,47 @@ const App: React.FC = () => {
       }
     });
   }, []);
+
+  const createSnapshot = useCallback((): HistorySnapshot => ({
+    settings,
+    manualRects,
+    islandRects,
+    hiddenRectIds: Array.from(hiddenRectIds),
+    selectedRectId,
+    imageBlob
+  }), [settings, manualRects, islandRects, hiddenRectIds, selectedRectId, imageBlob]);
+
+  const serializeSnapshot = (s: HistorySnapshot) => {
+    const blobSig = s.imageBlob ? `${s.imageBlob.size}:${s.imageBlob.type}` : 'none';
+    return JSON.stringify({
+      settings: s.settings,
+      manualRects: s.manualRects,
+      islandRects: s.islandRects,
+      hiddenRectIds: s.hiddenRectIds,
+      selectedRectId: s.selectedRectId,
+      imageBlob: blobSig
+    });
+  };
+
+  const pushHistory = useCallback((snapshot: HistorySnapshot) => {
+    if (isRestoringRef.current) return;
+    const history = historyRef.current;
+    const nextSerialized = serializeSnapshot(snapshot);
+    const current = history[historyIndex];
+    if (current && serializeSnapshot(current) === nextSerialized) return;
+
+    const trimmed = historyIndex < history.length - 1 ? history.slice(0, historyIndex + 1) : history;
+    trimmed.push(snapshot);
+    historyRef.current = trimmed;
+    setHistoryIndex(trimmed.length - 1);
+    setHistoryLength(trimmed.length);
+  }, [historyIndex]);
+
+  useEffect(() => {
+    if (isRestoringRef.current) return;
+    const timer = setTimeout(() => pushHistory(createSnapshot()), 300);
+    return () => clearTimeout(timer);
+  }, [createSnapshot, pushHistory]);
 
   // Save to DB on change (debounced slightly via effect deps)
   useEffect(() => {
@@ -237,6 +292,66 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedRectId, handleDeleteFrames]);
+
+  const restoreSnapshot = useCallback((snapshot: HistorySnapshot) => {
+    isRestoringRef.current = true;
+    setSettings(snapshot.settings);
+    setManualRects(snapshot.manualRects);
+    setIslandRects(snapshot.islandRects);
+    setHiddenRectIds(new Set(snapshot.hiddenRectIds));
+    setSelectedRectId(snapshot.selectedRectId);
+    setGeneratedFrames([]);
+    setIsPickingColor(false);
+
+    if (snapshot.imageBlob) {
+      const url = URL.createObjectURL(snapshot.imageBlob);
+      const img = new Image();
+      img.onload = () => {
+        setImage(img);
+        setImageBlob(snapshot.imageBlob);
+        isRestoringRef.current = false;
+      };
+      img.src = url;
+    } else {
+      setImage(null);
+      setImageBlob(null);
+      isRestoringRef.current = false;
+    }
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    const nextIndex = historyIndex - 1;
+    if (nextIndex < 0) return;
+    const snapshot = historyRef.current[nextIndex];
+    if (!snapshot) return;
+    setHistoryIndex(nextIndex);
+    restoreSnapshot(snapshot);
+  }, [historyIndex, restoreSnapshot]);
+
+  const handleRedo = useCallback(() => {
+    const nextIndex = historyIndex + 1;
+    if (nextIndex >= historyRef.current.length) return;
+    const snapshot = historyRef.current[nextIndex];
+    if (!snapshot) return;
+    setHistoryIndex(nextIndex);
+    restoreSnapshot(snapshot);
+  }, [historyIndex, restoreSnapshot]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleUndo, handleRedo]);
 
   useEffect(() => {
     if (!isPickingColor) return;
@@ -471,6 +586,10 @@ const App: React.FC = () => {
         onCancelPickColor={() => setIsPickingColor(false)}
         isPickingColor={isPickingColor}
         hasImage={!!image}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={historyIndex > 0}
+        canRedo={historyIndex >= 0 && historyIndex < historyLength - 1}
       />
       
       <main className="flex-1 relative border-r border-gray-750">
