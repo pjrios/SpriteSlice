@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { AppSettings, Rect } from '../types';
-import { calculateGridRects } from '../services/processor';
+import { applyColorKeysToImageData, calculateGridRects, hexToRgb } from '../services/processor';
 import { Minus, Plus, Maximize } from 'lucide-react';
 
 interface CanvasWorkspaceProps {
@@ -13,6 +13,8 @@ interface CanvasWorkspaceProps {
   setIslandRects: (rects: Rect[]) => void;
   selectedRectId: string | null;
   onSelectRect: (id: string | null) => void;
+  isPickingColor: boolean;
+  onPickColor: (hex: string) => void;
 }
 
 type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -26,7 +28,9 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   setManualRects,
   setIslandRects,
   selectedRectId,
-  onSelectRect
+  onSelectRect,
+  isPickingColor,
+  onPickColor
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,6 +50,55 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   
   const [currentDrawRect, setCurrentDrawRect] = useState<Rect | null>(null);
   const [initialResizeRect, setInitialResizeRect] = useState<Rect | null>(null);
+  const [processedCanvas, setProcessedCanvas] = useState<HTMLCanvasElement | null>(null);
+  
+  useEffect(() => {
+    if (isPickingColor) {
+      setIsDraggingPan(false);
+      setIsResizing(null);
+      setInitialResizeRect(null);
+      setIsDrawing(false);
+      setCurrentDrawRect(null);
+    }
+  }, [isPickingColor]);
+
+  useEffect(() => {
+    if (!image || !settings.processing.colorKeyEnabled) {
+      setProcessedCanvas(null);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setProcessedCanvas(null);
+      return;
+    }
+    ctx.drawImage(image, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const rgbs = settings.processing.colorKeyColors
+      .map(hexToRgb)
+      .filter((c): c is { r: number; g: number; b: number } => !!c);
+    if (rgbs.length > 0) {
+      applyColorKeysToImageData(
+        imageData,
+        rgbs,
+        settings.processing.colorKeyTolerance,
+        settings.processing.colorKeyFeather
+      );
+      ctx.putImageData(imageData, 0, 0);
+      setProcessedCanvas(canvas);
+      return;
+    }
+    setProcessedCanvas(null);
+  }, [
+    image,
+    settings.processing.colorKeyEnabled,
+    settings.processing.colorKeyColors,
+    settings.processing.colorKeyTolerance,
+    settings.processing.colorKeyFeather
+  ]);
 
   // Helper: Screen to Image coordinates
   const toImageCoords = (screenX: number, screenY: number) => {
@@ -83,6 +136,25 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     // Note: Grid rects are typically fixed, we skip updating them for now or it would require specific grid overrides
   };
 
+  const rgbToHex = (r: number, g: number, b: number) => {
+    const toHex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${toHex(Math.max(0, Math.min(255, Math.round(r))))}${toHex(Math.max(0, Math.min(255, Math.round(g))))}${toHex(Math.max(0, Math.min(255, Math.round(b))))}`;
+  };
+
+  const pickColorAt = (x: number, y: number) => {
+    if (!image) return;
+    const ix = Math.max(0, Math.min(image.width - 1, Math.round(x)));
+    const iy = Math.max(0, Math.min(image.height - 1, Math.round(y)));
+    const picker = document.createElement('canvas');
+    picker.width = image.width;
+    picker.height = image.height;
+    const pctx = picker.getContext('2d');
+    if (!pctx) return;
+    pctx.drawImage(image, 0, 0);
+    const data = pctx.getImageData(ix, iy, 1, 1).data;
+    onPickColor(rgbToHex(data[0], data[1], data[2]));
+  };
+
   // Zoom handlers
   const handleZoomIn = () => setZoom(z => Math.min(10, z + 0.25));
   const handleZoomOut = () => setZoom(z => Math.max(0.1, z - 0.25));
@@ -114,6 +186,10 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [image]);
+
+  useEffect(() => {
+    if (isPickingColor) setCursor('crosshair');
+  }, [isPickingColor]);
 
   // Handle Detection Logic
   const getHandleAtPosition = (mx: number, my: number, rect: Rect) => {
@@ -185,7 +261,8 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     ctx.imageSmoothingEnabled = false;
 
     if (image) {
-      ctx.drawImage(image, 0, 0);
+      if (processedCanvas) ctx.drawImage(processedCanvas, 0, 0);
+      else ctx.drawImage(image, 0, 0);
 
       const activeRects = getActiveRects();
 
@@ -261,6 +338,14 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isPickingColor && e.button === 0) {
+      const coords = toImageCoords(e.clientX, e.clientY);
+      if (image && coords.x >= 0 && coords.y >= 0 && coords.x < image.width && coords.y < image.height) {
+        pickColorAt(coords.x, coords.y);
+      }
+      return;
+    }
+
     if (e.button === 1 || e.shiftKey) {
       setIsDraggingPan(true);
       setDragStart({ x: e.clientX, y: e.clientY });
@@ -305,6 +390,10 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPickingColor) {
+      setCursor('crosshair');
+      return;
+    }
     // 1. Pan
     if (isDraggingPan) {
       const dx = e.clientX - dragStart.x;
@@ -401,6 +490,14 @@ const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
           <div className="text-center">
             <p className="text-xl">No Image Loaded</p>
             <p className="text-sm">Upload a sprite sheet to begin</p>
+          </div>
+        </div>
+      )}
+
+      {isPickingColor && image && (
+        <div className="absolute inset-0 pointer-events-none flex items-start justify-center">
+          <div className="mt-4 bg-gray-900/80 text-gray-100 text-xs px-3 py-1.5 rounded border border-gray-700/60">
+            Click the image to pick a color (Esc to cancel)
           </div>
         </div>
       )}

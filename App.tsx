@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import FrameList from './components/FrameList';
 import CanvasWorkspace from './components/CanvasWorkspace';
 import PreviewModal from './components/PreviewModal';
-import { calculateGridRects, extractFrame, detectIslands } from './services/processor';
+import { applyColorKeysToImageData, calculateGridRects, extractFrame, detectIslands, hexToRgb } from './services/processor';
 import { saveProject, loadProject } from './services/db';
 import JSZip from 'jszip';
 
@@ -25,13 +25,52 @@ const DEFAULT_SETTINGS: AppSettings = {
   processing: {
     autoTrim: false,
     colorKeyEnabled: false,
-    colorKeyColor: '#ff00ff',
-    colorKeyTolerance: 10
+    colorKeyColors: ['#ff00ff'],
+    colorKeyTolerance: 10,
+    colorKeyFeather: 0
   },
   export: {
     fps: 12,
     prefix: 'sprite'
   }
+};
+
+const rgbToHex = (r: number, g: number, b: number) => {
+  const toHex = (v: number) => v.toString(16).padStart(2, '0');
+  return `#${toHex(Math.max(0, Math.min(255, Math.round(r))))}${toHex(Math.max(0, Math.min(255, Math.round(g))))}${toHex(Math.max(0, Math.min(255, Math.round(b))))}`;
+};
+
+const detectBackgroundColor = (image: HTMLImageElement) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '#000000';
+  ctx.drawImage(image, 0, 0);
+
+  const size = Math.max(1, Math.min(10, image.width, image.height));
+  const samples = [
+    { x: 0, y: 0 },
+    { x: image.width - size, y: 0 },
+    { x: 0, y: image.height - size },
+    { x: image.width - size, y: image.height - size }
+  ];
+
+  let r = 0, g = 0, b = 0, count = 0;
+  for (const s of samples) {
+    const data = ctx.getImageData(s.x, s.y, size, size).data;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a === 0) continue;
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      count += 1;
+    }
+  }
+
+  if (count === 0) return '#000000';
+  return rgbToHex(r / count, g / count, b / count);
 };
 
 const App: React.FC = () => {
@@ -46,6 +85,7 @@ const App: React.FC = () => {
   const [selectedRectId, setSelectedRectId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [isPickingColor, setIsPickingColor] = useState(false);
 
   // Load from DB on mount
   useEffect(() => {
@@ -54,7 +94,12 @@ const App: React.FC = () => {
         setSettings(prev => ({
            ...prev, 
            ...project.settings,
-           islands: { ...prev.islands, ...project.settings.islands } // Merge ensures new props exist
+           islands: { ...prev.islands, ...project.settings.islands }, // Merge ensures new props exist
+           processing: {
+             ...prev.processing,
+             ...project.settings.processing,
+             colorKeyColors: project.settings.processing.colorKeyColors ?? prev.processing.colorKeyColors
+           }
         }));
         setManualRects(project.manualRects);
         if (project.imageBlob) {
@@ -144,6 +189,15 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedRectId, handleDeleteFrames]);
 
+  useEffect(() => {
+    if (!isPickingColor) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsPickingColor(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isPickingColor]);
+
   // Generate Frames & Handle Island Detection
   useEffect(() => {
     if (!image) return;
@@ -167,6 +221,19 @@ const App: React.FC = () => {
             if (ctx) {
                ctx.drawImage(image, 0, 0);
                const imageData = ctx.getImageData(0, 0, image.width, image.height);
+               if (settings.processing.colorKeyEnabled) {
+                 const rgbs = settings.processing.colorKeyColors
+                   .map(hexToRgb)
+                   .filter((c): c is { r: number; g: number; b: number } => !!c);
+                 if (rgbs.length > 0) {
+                   applyColorKeysToImageData(
+                     imageData,
+                     rgbs,
+                     settings.processing.colorKeyTolerance,
+                     settings.processing.colorKeyFeather
+                   );
+                 }
+               }
                const detected = detectIslands(imageData, settings.islands.minWidth, settings.islands.minHeight);
                if (isActive) setIslandRects(detected);
                rects = detected;
@@ -282,6 +349,36 @@ const App: React.FC = () => {
     link.click();
   };
 
+  const handlePickColor = useCallback((hex: string) => {
+    setSettings(prev => ({
+      ...prev,
+      processing: {
+        ...prev.processing,
+        colorKeyEnabled: true,
+        colorKeyColors: prev.processing.colorKeyColors.includes(hex)
+          ? prev.processing.colorKeyColors
+          : [...prev.processing.colorKeyColors, hex]
+      }
+    }));
+    setIsPickingColor(false);
+  }, []);
+
+  const handleAutoDetectColor = useCallback(() => {
+    if (!image) return;
+    const detected = detectBackgroundColor(image);
+    setSettings(prev => ({
+      ...prev,
+      processing: {
+        ...prev.processing,
+        colorKeyEnabled: true,
+        colorKeyColors: prev.processing.colorKeyColors.includes(detected)
+          ? prev.processing.colorKeyColors
+          : [...prev.processing.colorKeyColors, detected]
+      }
+    }));
+    setIsPickingColor(false);
+  }, [image]);
+
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 font-sans antialiased">
       <Sidebar 
@@ -291,10 +388,18 @@ const App: React.FC = () => {
            if (s.islands && (s.islands.minWidth !== settings.islands.minWidth || s.islands.minHeight !== settings.islands.minHeight)) {
              setIslandRects([]);
            }
+           if (s.processing && settings.mode === 'islands') {
+             setIslandRects([]);
+           }
            setSettings(prev => ({...prev, ...s}));
         }} 
         onUpload={handleUpload}
         isProcessing={isProcessing}
+        onPickColor={() => setIsPickingColor(true)}
+        onAutoDetectColor={handleAutoDetectColor}
+        onCancelPickColor={() => setIsPickingColor(false)}
+        isPickingColor={isPickingColor}
+        hasImage={!!image}
       />
       
       <main className="flex-1 relative border-r border-gray-750">
@@ -308,6 +413,8 @@ const App: React.FC = () => {
           setIslandRects={setIslandRects}
           selectedRectId={selectedRectId}
           onSelectRect={setSelectedRectId}
+          isPickingColor={isPickingColor}
+          onPickColor={handlePickColor}
         />
       </main>
 

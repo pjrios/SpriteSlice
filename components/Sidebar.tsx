@@ -7,9 +7,24 @@ interface SidebarProps {
   updateSettings: (s: Partial<AppSettings>) => void;
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isProcessing: boolean;
+  onPickColor: () => void;
+  onCancelPickColor: () => void;
+  onAutoDetectColor: () => void;
+  isPickingColor: boolean;
+  hasImage: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ settings, updateSettings, onUpload, isProcessing }) => {
+const Sidebar: React.FC<SidebarProps> = ({
+  settings,
+  updateSettings,
+  onUpload,
+  isProcessing,
+  onPickColor,
+  onCancelPickColor,
+  onAutoDetectColor,
+  isPickingColor,
+  hasImage
+}) => {
   
   const updateGrid = (key: keyof AppSettings['grid'], val: number) => {
     updateSettings({
@@ -30,6 +45,11 @@ const Sidebar: React.FC<SidebarProps> = ({ settings, updateSettings, onUpload, i
       ...settings,
       processing: { ...settings.processing, [key]: val }
     });
+  };
+
+  const removeColorKey = (hex: string) => {
+    const next = settings.processing.colorKeyColors.filter(c => c.toLowerCase() !== hex.toLowerCase());
+    updateProc('colorKeyColors', next.length > 0 ? next : settings.processing.colorKeyColors);
   };
 
   return (
@@ -208,11 +228,53 @@ const Sidebar: React.FC<SidebarProps> = ({ settings, updateSettings, onUpload, i
                 <div className="flex items-center gap-2">
                   <input 
                     type="color" 
-                    value={settings.processing.colorKeyColor}
-                    onChange={(e) => updateProc('colorKeyColor', e.target.value)}
+                    value={settings.processing.colorKeyColors[0] || '#000000'}
+                    onChange={(e) => updateProc('colorKeyColors', [e.target.value])}
                     className="w-6 h-6 rounded bg-transparent border-0 cursor-pointer" 
                   />
-                  <span className="text-xs text-gray-500">Target Color</span>
+                  <span className="text-xs text-gray-500">Primary Color</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {settings.processing.colorKeyColors.map(color => (
+                    <div key={color} className="flex items-center gap-1.5 px-2 py-1 rounded border border-gray-700 bg-gray-900">
+                      <span className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: color }} />
+                      <span className="text-[10px] text-gray-400 uppercase">{color}</span>
+                      {settings.processing.colorKeyColors.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeColorKey(color)}
+                          className="text-[10px] text-gray-500 hover:text-gray-200"
+                          title="Remove color"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={isPickingColor ? onCancelPickColor : onPickColor}
+                    disabled={!hasImage}
+                    className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                      isPickingColor
+                        ? 'bg-blue-600 text-white border-blue-500'
+                        : 'bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800'
+                    } ${!hasImage ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    title="Pick a color from the image"
+                  >
+                    {isPickingColor ? 'Cancel Picker' : 'Pick From Image'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onAutoDetectColor}
+                    disabled={!hasImage}
+                    className={`px-2 py-1 text-[11px] rounded border transition-colors bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800 ${!hasImage ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    title="Auto-detect background color from corners"
+                  >
+                    Auto-Detect
+                  </button>
                 </div>
                 <div>
                   <label className="block text-gray-500 text-xs mb-1">Tolerance: {settings.processing.colorKeyTolerance}</label>
@@ -222,6 +284,17 @@ const Sidebar: React.FC<SidebarProps> = ({ settings, updateSettings, onUpload, i
                     max="100" 
                     value={settings.processing.colorKeyTolerance}
                     onChange={(e) => updateProc('colorKeyTolerance', Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-500 text-xs mb-1">Edge Feather: {settings.processing.colorKeyFeather}</label>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="50" 
+                    value={settings.processing.colorKeyFeather}
+                    onChange={(e) => updateProc('colorKeyFeather', Number(e.target.value))}
                     className="w-full"
                   />
                 </div>

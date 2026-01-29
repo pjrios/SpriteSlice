@@ -33,8 +33,9 @@ export interface AppSettings {
   processing: {
     autoTrim: boolean;
     colorKeyEnabled: boolean;
-    colorKeyColor: string; // Hex
+    colorKeyColors: string[]; // Hex list
     colorKeyTolerance: number; // 0-255
+    colorKeyFeather: number; // 0-50
   };
   export: {
     fps: number;

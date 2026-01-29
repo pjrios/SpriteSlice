@@ -133,9 +133,17 @@ const getTrimmedBounds = (imageData: ImageData) => {
 };
 
 // Helper: Apply color key removal
-const applyColorKey = (imageData: ImageData, targetColor: {r:number, g:number, b:number}, tolerance: number) => {
+export const applyColorKeyToImageData = (
+  imageData: ImageData,
+  targetColor: { r: number; g: number; b: number },
+  tolerance: number,
+  feather: number
+) => {
   const { data } = imageData;
-  const tolSq = tolerance * tolerance;
+  const tol = Math.max(0, tolerance);
+  const featherPx = Math.max(0, feather);
+  const tolSq = tol * tol;
+  const featherSq = (tol + featherPx) * (tol + featherPx);
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
@@ -149,7 +157,23 @@ const applyColorKey = (imageData: ImageData, targetColor: {r:number, g:number, b
 
     if (distSq <= tolSq) {
       data[i+3] = 0; // Set alpha to 0
+    } else if (featherPx > 0 && distSq <= featherSq) {
+      const dist = Math.sqrt(distSq);
+      const t = (dist - tol) / featherPx; // 0..1
+      data[i+3] = Math.round(data[i+3] * t);
     }
+  }
+};
+
+export const applyColorKeysToImageData = (
+  imageData: ImageData,
+  targetColors: { r: number; g: number; b: number }[],
+  tolerance: number,
+  feather: number
+) => {
+  if (targetColors.length === 0) return;
+  for (const color of targetColors) {
+    applyColorKeyToImageData(imageData, color, tolerance, feather);
   }
 };
 
@@ -171,9 +195,16 @@ export const extractFrame = async (
 
   // 2. Color Key
   if (settings.processing.colorKeyEnabled) {
-    const rgb = hexToRgb(settings.processing.colorKeyColor);
-    if (rgb) {
-      applyColorKey(imageData, rgb, settings.processing.colorKeyTolerance);
+    const rgbs = settings.processing.colorKeyColors
+      .map(hexToRgb)
+      .filter((c): c is { r: number; g: number; b: number } => !!c);
+    if (rgbs.length > 0) {
+      applyColorKeysToImageData(
+        imageData,
+        rgbs,
+        settings.processing.colorKeyTolerance,
+        settings.processing.colorKeyFeather
+      );
       ctx.putImageData(imageData, 0, 0);
     }
   }
