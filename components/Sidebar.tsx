@@ -10,6 +10,7 @@ interface SidebarProps {
   onPickColor: () => void;
   onCancelPickColor: () => void;
   onAutoDetectColor: () => void;
+  onAutoDetectEdgeColors: () => void;
   isPickingColor: boolean;
   hasImage: boolean;
 }
@@ -22,6 +23,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onPickColor,
   onCancelPickColor,
   onAutoDetectColor,
+  onAutoDetectEdgeColors,
   isPickingColor,
   hasImage
 }) => {
@@ -273,7 +275,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                     className={`px-2 py-1 text-[11px] rounded border transition-colors bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800 ${!hasImage ? 'opacity-50 cursor-not-allowed' : ''}`}
                     title="Auto-detect background color from corners"
                   >
-                    Auto-Detect
+                    Auto-Detect Corners
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onAutoDetectEdgeColors}
+                    disabled={!hasImage}
+                    className={`px-2 py-1 text-[11px] rounded border transition-colors bg-gray-900 text-gray-200 border-gray-700 hover:bg-gray-800 ${!hasImage ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    title="Auto-detect background palette from image edges"
+                  >
+                    Detect Edges
                   </button>
                 </div>
                 <div>

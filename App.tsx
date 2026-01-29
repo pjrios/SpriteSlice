@@ -73,6 +73,55 @@ const detectBackgroundColor = (image: HTMLImageElement) => {
   return rgbToHex(r / count, g / count, b / count);
 };
 
+const detectEdgeColors = (image: HTMLImageElement, maxColors: number = 12, mergeDistance: number = 10) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return [] as string[];
+  ctx.drawImage(image, 0, 0);
+
+  const addIfUnique = (colors: { r: number; g: number; b: number }[], c: { r: number; g: number; b: number }) => {
+    const distSq = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }) =>
+      (a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2;
+    const mergeSq = mergeDistance * mergeDistance;
+    if (colors.some(existing => distSq(existing, c) <= mergeSq)) return;
+    colors.push(c);
+  };
+
+  const colors: { r: number; g: number; b: number }[] = [];
+  const w = image.width;
+  const h = image.height;
+  const step = Math.max(1, Math.floor(Math.min(w, h) / 64));
+
+  const sampleRow = (y: number) => {
+    const data = ctx.getImageData(0, y, w, 1).data;
+    for (let x = 0; x < w; x += step) {
+      const i = x * 4;
+      if (data[i + 3] === 0) continue;
+      addIfUnique(colors, { r: data[i], g: data[i + 1], b: data[i + 2] });
+      if (colors.length >= maxColors) return;
+    }
+  };
+
+  const sampleCol = (x: number) => {
+    const data = ctx.getImageData(x, 0, 1, h).data;
+    for (let y = 0; y < h; y += step) {
+      const i = y * 4;
+      if (data[i + 3] === 0) continue;
+      addIfUnique(colors, { r: data[i], g: data[i + 1], b: data[i + 2] });
+      if (colors.length >= maxColors) return;
+    }
+  };
+
+  sampleRow(0);
+  if (colors.length < maxColors) sampleRow(h - 1);
+  if (colors.length < maxColors) sampleCol(0);
+  if (colors.length < maxColors) sampleCol(w - 1);
+
+  return colors.map(c => rgbToHex(c.r, c.g, c.b));
+};
+
 const App: React.FC = () => {
   // State
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -379,6 +428,27 @@ const App: React.FC = () => {
     setIsPickingColor(false);
   }, [image]);
 
+  const handleAutoDetectEdgeColors = useCallback(() => {
+    if (!image) return;
+    const detected = detectEdgeColors(image);
+    if (detected.length === 0) return;
+    setSettings(prev => {
+      const merged = [...prev.processing.colorKeyColors];
+      for (const c of detected) {
+        if (!merged.includes(c)) merged.push(c);
+      }
+      return {
+        ...prev,
+        processing: {
+          ...prev.processing,
+          colorKeyEnabled: true,
+          colorKeyColors: merged
+        }
+      };
+    });
+    setIsPickingColor(false);
+  }, [image]);
+
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 font-sans antialiased">
       <Sidebar 
@@ -397,6 +467,7 @@ const App: React.FC = () => {
         isProcessing={isProcessing}
         onPickColor={() => setIsPickingColor(true)}
         onAutoDetectColor={handleAutoDetectColor}
+        onAutoDetectEdgeColors={handleAutoDetectEdgeColors}
         onCancelPickColor={() => setIsPickingColor(false)}
         isPickingColor={isPickingColor}
         hasImage={!!image}
